@@ -13,7 +13,7 @@ const client = new Client({
     }),
     puppeteer: {
         headless: true,
-        // Critical flags for Railway/Linux environments
+        // More aggressive memory management flags
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -22,7 +22,21 @@ const client = new Client({
             "--no-first-run",
             "--no-zygote",
             "--single-process", 
-            "--disable-gpu"
+            "--disable-gpu",
+            "--hide-scrollbars",
+            "--disable-notifications",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-breakpad",
+            "--disable-component-extensions-with-background-pages",
+            "--disable-extensions",
+            "--disable-features=TranslateUI,BlinkGenPropertyTrees",
+            "--disable-ipc-flooding-protection",
+            "--disable-renderer-backgrounding",
+            "--enable-features=NetworkService,NetworkServiceInProcess",
+            "--force-color-profile=srgb",
+            "--metrics-recording-only",
+            "--mute-audio"
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium"
     }
@@ -32,7 +46,6 @@ const client = new Client({
 client.on("qr", (qr) => {
     botStatus.qr = qr;
     botStatus.connected = false;
-    
     console.log("Scan QR Code Below:");
     qrcode.generate(qr, { small: true });
 });
@@ -40,20 +53,33 @@ client.on("qr", (qr) => {
 // When the bot successfully logs in
 client.on("ready", () => {
     botStatus.connected = true;
-    botStatus.qr = null; // Clear QR once connected
+    botStatus.qr = null; 
     console.log("WhatsApp Bot Ready!");
 });
 
-// Handle disconnection
-client.on("disconnected", () => {
+// Handle disconnection or crash
+client.on("disconnected", (reason) => {
     botStatus.connected = false;
-    console.log("WhatsApp Bot Disconnected");
+    console.log("WhatsApp Bot Disconnected:", reason);
+    // Attempt to re-initialize if it wasn't a manual logout
+    try {
+        client.initialize();
+    } catch (e) {
+        console.error("Re-initialization failed:", e);
+    }
 });
 
-client.initialize();
+client.initialize().catch(err => console.error("Initial load error:", err));
 
-// Export both the client (for sending messages) and the status getter
+// Export both the client and a safer status getter
 module.exports = { 
     client, 
-    getBotStatus: () => botStatus 
+    getBotStatus: () => {
+        // Double check if the internal browser page is actually alive
+        const isBrowserAlive = client.pupPage && !client.pupPage.isClosed();
+        return {
+            connected: botStatus.connected && isBrowserAlive,
+            qr: botStatus.qr
+        };
+    } 
 };

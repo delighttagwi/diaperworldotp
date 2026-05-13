@@ -21,6 +21,7 @@ router.post("/send-otp", async (req, res) => {
     try {
         const { phone } = req.body;
 
+        // Validation for missing phone number
         if (!phone) {
             return res.status(400).json({
                 success: false,
@@ -28,27 +29,36 @@ router.post("/send-otp", async (req, res) => {
             });
         }
 
-        // 1. Check if the bot is actually logged in before trying to send
+        // 1. SESSION SAFETY CHECK: Check if the browser process is alive
+        // This prevents the "Attempted to use detached Frame" crash
+        if (!client || !client.pupPage || client.pupPage.isClosed()) {
+            return res.status(503).json({
+                success: false,
+                message: "WhatsApp session lost or browser crashed. Please re-scan QR."
+            });
+        }
+
+        // 2. AUTH CHECK: Check if the bot is actually logged in
         const status = getBotStatus();
         if (!status.connected) {
             return res.status(503).json({
                 success: false,
                 message: "WhatsApp is not connected. Please scan the QR code first.",
-                qr: status.qr // Send the QR back so the frontend can display it
+                qr: status.qr 
             });
         }
 
-        // 2. Generate 6-digit OTP
+        // 3. Generate 6-digit OTP
         const otp = Math.floor(100000 + Math.random() * 900000);
 
-        // 3. Save OTP (Consider adding an expiry time in production)
+        // 4. Save OTP
         otpStore[phone] = otp;
 
-        // 4. Format the ID (Remove '+' if present and append @c.us)
+        // 5. Format the ID
         const cleanPhone = phone.replace("+", "");
         const chatId = `${cleanPhone}@c.us`;
 
-        // 5. Send Message
+        // 6. Send Message
         await client.sendMessage(
             chatId,
             `Your verification code is: ${otp}`
@@ -63,7 +73,7 @@ router.post("/send-otp", async (req, res) => {
         console.error("Error in /send-otp:", error);
         res.status(500).json({
             success: false,
-            message: "Failed to send WhatsApp message"
+            message: "Failed to send WhatsApp message. Server might be restarting."
         });
     }
 });
@@ -84,9 +94,7 @@ router.post("/verify-otp", (req, res) => {
 
     const savedOTP = otpStore[phone];
 
-    // Use == to handle potential string/number mismatches from body
     if (savedOTP && savedOTP == otp) {
-        // Clear the OTP so it can't be used twice
         delete otpStore[phone];
 
         return res.json({
